@@ -8,6 +8,10 @@ from src.nlp.skill_display import (
     prepare_skill_display,
     format_category_name,
 )
+from src.ats.analyzer import (
+    calculate_overall_ats_score,
+    generate_ats_suggestions,
+)
 
 st.set_page_config(
     page_title="CareerLens",
@@ -141,6 +145,72 @@ if uploaded_file is not None:
         else:
             st.info("No recognized skills detected.")
 
+        st.divider()
+
+        st.subheader("📊 ATS Analysis")
+
+        grouped_skills = {
+            category: [
+                match
+                for match in skill_matches
+                if (match.category or "other") == category
+            ]
+            for category in {
+                match.category or "other"
+                for match in skill_matches
+            }
+        }
+
+        ats_result = calculate_overall_ats_score(
+            resume,
+            skill_matches,
+            grouped_skills,
+        )
+
+        ats_score = ats_result["total_score"]
+
+        st.metric(
+            label="ATS Score",
+            value=f"{ats_score:.1f} / 100",
+        )
+
+        st.progress(min(ats_score / 100, 1.0))
+
+        st.markdown("### 📋 Score Breakdown")
+
+        breakdown = ats_result["breakdown"]
+
+        score_columns = st.columns(3)
+
+        categories = [
+            ("Resume Completeness", "resume_completeness"),
+            ("Skills & Keywords", "skills_keywords"),
+            ("Projects & Experience", "projects_experience"),
+            ("Education & Certifications", "education_certifications"),
+            ("Resume Structure", "resume_structure"),
+            ("Content Quality", "content_quality"),
+        ]
+
+        for index, (label, key) in enumerate(categories):
+
+            section = breakdown[key]
+
+            with score_columns[index % 3]:
+                st.metric(
+                    label,
+                    f"{section['score']:.1f} / {section['max_score']}",
+                )
+
+        suggestions = generate_ats_suggestions(ats_result)
+    
+        st.markdown("### 💡 Improvement Suggestions")
+
+        if suggestions:
+            for suggestion in suggestions:
+                st.write(f"• {suggestion}")
+        else:
+            st.success("No major ATS improvements detected.")
+        
         with st.expander("🔍 View Raw Extracted Text"):
             st.text_area(
                 "Resume text",
