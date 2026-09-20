@@ -2,7 +2,12 @@ import streamlit as st
 
 from src.resume.parser import extract_text_from_pdf
 from src.resume.extractor import extract_resume_data
-
+from src.nlp.skill_extractor import extract_skill_matches
+from src.nlp.skill_display import prepare_skill_display
+from src.nlp.skill_display import (
+    prepare_skill_display,
+    format_category_name,
+)
 
 st.set_page_config(
     page_title="CareerLens",
@@ -98,13 +103,43 @@ if uploaded_file is not None:
         else:
             st.info("No certifications detected.")
 
-        st.subheader("🛠️ Skills")
+        st.subheader("🛠️ Skills Analysis")
 
-        if resume.skills:
-            for item in resume.skills:
-                st.write(f"• {item}")
+        skill_matches = extract_skill_matches(resume_text)
+        skill_display = prepare_skill_display(skill_matches)
+
+        for match in skill_matches:
+            if match.skill == "machine learning":
+                st.write(
+                    "DEBUG:",
+                    match.skill,
+                    match.confidence,
+                    match.evidence
+                )
+
+        if skill_display:
+
+            for category, skills in skill_display.items():
+
+                st.markdown(
+                    f"### {format_category_name(category)}"
+                )
+
+                for skill in skills:
+
+                    confidence = skill["confidence"] * 100
+
+                    st.write(
+                        f"**{skill['skill']}** — "
+                        f"{confidence:.0f}% confidence"
+                    )
+
+                    st.caption(
+                        f"Evidence: {skill['evidence']}"
+                 )
+
         else:
-            st.info("No skills detected.")
+            st.info("No recognized skills detected.")
 
         with st.expander("🔍 View Raw Extracted Text"):
             st.text_area(
