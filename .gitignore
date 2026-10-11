@@ -25,3 +25,9 @@ Thumbs.db
 
 # Temporary files
 *.tmp
+
+# Raw resume datasets
+data/raw/
+
+# Derived resume training data
+data/career_model_training_data.csv
