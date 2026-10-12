@@ -1,0 +1,10 @@
+﻿course_id,title,provider,url,skills,career_families,level,price,duration,description
+KAG-PY-001,Kaggle Python,Kaggle,https://www.kaggle.com/learn/python,python,Data & Analytics;Software Engineering,Beginner,Free,5 hours,Introductory Python syntax and programming practice.
+KAG-PD-001,Kaggle Pandas,Kaggle,https://www.kaggle.com/learn/pandas,pandas;data analysis,Data & Analytics,Beginner,Free,,Hands-on data manipulation with pandas.
+KAG-SQL-001,Intro to SQL,Kaggle,https://www.kaggle.com/learn/intro-to-sql,sql,Data & Analytics;Software Engineering,Beginner,Free,,Learn SQL queries for working with data.
+KAG-DV-001,Data Visualization,Kaggle,https://www.kaggle.com/learn/data-visualization,data visualization,Data & Analytics,Beginner,Free,,Build data visualizations and communicate findings.
+MS-PBI-001,Get started with Microsoft data analytics,Microsoft Learn,https://learn.microsoft.com/en-us/training/paths/data-analytics-microsoft/,data analysis;power bi;data visualization,Data & Analytics,Intermediate,Free,1 hr 28 min,Explore analytics and build interactive Power BI reports.
+HUB-DM-001,Digital Marketing Certification Course,HubSpot Academy,https://academy.hubspot.com/courses/digital-marketing,seo;social media marketing;content marketing;email marketing,Marketing & Growth,Beginner,Free,,Learn digital marketing strategy SEO social media and email marketing.
+GOOG-GA-001,Analytics Academy,Google Skillshop,https://support.google.com/analytics/answer/15440208?hl=en-IN,google analytics;data analysis,Marketing & Growth;Data & Analytics,Beginner,Free,,Learn Google Analytics setup reporting and measurement.
+GH-GIT-001,Introduction to Git,GitHub Skills,https://learn.github.com/skills,git;github,Software Engineering,Beginner,Free,,Learn Git and GitHub workflows through interactive courses.
+FIG-DES-001,Figma Design for beginners,Figma Learn,https://help.figma.com/hc/en-us/sections/23691657321239-Courses,figma,UI/UX & Product Design,Beginner,Free,,Learn design fundamentals through hands-on projects.
