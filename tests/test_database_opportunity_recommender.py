@@ -1,5 +1,5 @@
 
-from datetime import date
+from datetime import date, datetime, timezone
 
 from src.database.opportunity_store import (
     create_database_engine,
@@ -35,6 +35,7 @@ def test_load_database_opportunities_maps_fields(tmp_path):
             deadline="2026-12-31",
             description="Python and SQL internship.",
             status="open",
+            seen_at=datetime(2026, 10, 1, tzinfo=timezone.utc),
         )
 
         opportunities = load_database_opportunities(engine)
@@ -46,7 +47,7 @@ def test_load_database_opportunities_maps_fields(tmp_path):
         assert opportunity["title"] == "Python Intern"
         assert opportunity["skills"] == "python;sql"
         assert opportunity["source"] == "GH-TEST"
-        assert opportunity["last_verified"] == date.today().isoformat()
+        assert opportunity["last_verified"] == "2026-10-01"
 
     finally:
         engine.dispose()

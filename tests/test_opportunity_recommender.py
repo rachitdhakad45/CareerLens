@@ -168,6 +168,7 @@ def test_recommends_relevant_open_opportunities(tmp_path):
         career_family="Data & Analytics",
         catalog_path=catalog_path,
         today=date(2026, 10, 12),
+        include_related=True,
     )
 
     ids = [item["opportunity_id"] for item in results]
@@ -220,11 +221,55 @@ def test_wrong_career_family_is_excluded(tmp_path):
         career_family="Data & Analytics",
         catalog_path=catalog_path,
         today=date(2026, 10, 12),
+        include_related=True,
     )
 
     ids = [item["opportunity_id"] for item in results]
 
     assert "JOB-001" not in ids
+
+
+def test_database_department_names_can_match_by_role_skills(tmp_path):
+    catalog_path = create_test_catalog(
+        tmp_path / "opportunities.csv"
+    )
+    with catalog_path.open("r", encoding="utf-8", newline="") as file:
+        rows = list(csv.DictReader(file))
+    rows[0]["career_families"] = "Analytics - Product Operations"
+    with catalog_path.open("w", encoding="utf-8", newline="") as file:
+        writer = csv.DictWriter(file, fieldnames=COLUMNS)
+        writer.writeheader()
+        writer.writerows(rows)
+
+    results = recommend_opportunities(
+        resume_text="Technical Skills\nPython",
+        career_family="Data & Analytics",
+        catalog_path=catalog_path,
+        today=date(2026, 10, 12),
+        include_related=True,
+    )
+
+    assert any(item["opportunity_id"] == "INT-001" for item in results)
+
+
+def test_related_jobs_can_be_browsed_when_no_gap_remains(tmp_path):
+    catalog_path = create_test_catalog(
+        tmp_path / "opportunities.csv"
+    )
+
+    results = recommend_opportunities(
+        resume_text=(
+            "Python SQL pandas numpy EDA statistics tableau power bi "
+            "data visualization mysql postgresql"
+        ),
+        career_family="Data & Analytics",
+        catalog_path=catalog_path,
+        today=date(2026, 10, 12),
+        include_related=True,
+    )
+
+    assert results
+    assert results[0]["role_skills_matched"]
 
 
 def test_stale_verification_is_excluded(tmp_path):

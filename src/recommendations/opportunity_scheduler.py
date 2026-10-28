@@ -39,13 +39,17 @@ def run_sync(database_url: str | None = None) -> dict:
         result = sync_enabled_sources(engine=engine)
 
         logger.info(
-            "Sync finished: %s sources configured, %s sources succeeded, "
-            "%s sources failed, %s jobs fetched, %s jobs saved.",
+            "Sync finished: %s sources configured, %s succeeded, "
+            "%s partially succeeded, %s failed; %s jobs fetched, "
+            "%s saved, %s rejected, %s closed.",
             result["sources_configured"],
             result["sources_succeeded"],
+            result["sources_partially_succeeded"],
             result["sources_failed"],
             result["jobs_fetched"],
             result["jobs_saved"],
+            result["jobs_rejected"],
+            result["jobs_closed"],
         )
 
         for error in result["errors"]:

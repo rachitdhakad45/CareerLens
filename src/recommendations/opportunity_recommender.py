@@ -2,6 +2,7 @@
 """Recommend opportunities using candidate skill gaps."""
 
 import csv
+import re
 from datetime import date, datetime, timezone
 from pathlib import Path
 
@@ -9,7 +10,10 @@ from sqlalchemy.engine import Engine
 
 from src.database.opportunity_store import list_open_opportunities
 from src.nlp.skill_extractor import normalize_skill
-from src.recommendations.career_requirements import SKILL_PRIORITIES
+from src.recommendations.career_requirements import (
+    CAREER_REQUIREMENTS,
+    SKILL_PRIORITIES,
+)
 from src.recommendations.skill_gap import analyze_skill_gap
 
 
@@ -46,6 +50,78 @@ PRIORITY_POINTS = {
 }
 
 MAX_VERIFICATION_AGE_DAYS = 30
+
+CAREER_FAMILY_TERMS = {
+    "Software Engineering": (
+        "software", "developer", "platform", "infrastructure",
+        "backend", "frontend", "mobile", "security engineering",
+        "systems engineering", "technology",
+    ),
+    "Data & Analytics": (
+        "analytics", "data science", "data analyst", "business intelligence",
+        "insights", "quantitative research",
+    ),
+    "Finance & Accounting": (
+        "finance", "accounting", "financial", "treasury", "audit", "tax",
+    ),
+    "Graphic & Creative Design": (
+        "creative", "graphic design", "illustration", "brand design",
+        "visual design", "art direction",
+    ),
+    "Human Resources": (
+        "human resources", "people team", "recruiting", "recruitment",
+        "talent acquisition", "employee relations",
+    ),
+    "Marketing & Growth": (
+        "marketing", "growth", "communications", "content marketing",
+        "digital marketing", "seo", "campaigns",
+    ),
+    "Project & Product Management": (
+        "product management", "product manager", "project management",
+        "program management", "product operations",
+    ),
+    "Sales & Business Development": (
+        "sales", "account executive", "business development", "revenue",
+        "customer success", "partnerships",
+    ),
+    "Core Engineering": (
+        "mechanical", "electrical", "manufacturing", "hardware",
+        "civil engineering", "quality engineering", "engineering design",
+    ),
+    "UI/UX & Product Design": (
+        "user experience", "user research", "interaction design", "product design",
+        "design systems", "ux", "ui",
+    ),
+}
+
+COMMON_CROSS_ROLE_SKILLS = {
+    "python", "sql", "excel", "communication", "data analysis",
+    "statistics", "leadership", "problem solving", "figma", "visual design",
+}
+
+
+def _matches_career_family(
+    opportunity: dict,
+    career_family: str,
+    career_families: set[str],
+    role_skill_overlap: list[str],
+) -> bool:
+    """Bridge source-specific departments to CareerLens role categories."""
+    if career_family in career_families:
+        return True
+
+    source_labels = " ".join((
+        opportunity.get("title", ""),
+        opportunity.get("career_families", ""),
+    )).casefold()
+    if any(
+        re.search(r"\b" + re.escape(term) + r"\b", source_labels)
+        for term in CAREER_FAMILY_TERMS.get(career_family, ())
+    ):
+        return True
+
+    specific_overlap = set(role_skill_overlap) - COMMON_CROSS_ROLE_SKILLS
+    return bool(specific_overlap)
 
 
 def load_opportunity_catalog(catalog_path=None) -> list[dict]:
@@ -143,12 +219,15 @@ def recommend_opportunities(
     catalog_path=None,
     today: date | None = None,
     engine: Engine | None = None,
+    include_related: bool = False,
 ) -> list[dict]:
     """
     Recommend open, recently verified opportunities.
 
     Pass engine to use the database. Otherwise, use the legacy CSV
     catalog. Scores represent skill relevance, not hiring probability.
+    include_related also returns jobs whose source departments differ from
+    CareerLens role names, when their extracted skills overlap that role.
     """
     if (
         not isinstance(top_n, int)
@@ -170,8 +249,14 @@ def recommend_opportunities(
         for item in gap["missing_skills"]
     }
 
-    if not missing_priorities:
+    if not missing_priorities and not include_related:
         return []
+
+    role_skills = {
+        normalize_skill(skill)
+        for group in CAREER_REQUIREMENTS[career_family].values()
+        for skill in group
+    }
 
     if engine is not None:
         opportunities = load_database_opportunities(engine)
@@ -217,26 +302,45 @@ def recommend_opportunities(
             if family.strip()
         }
 
-        if career_family not in career_families:
-            continue
-
         opportunity_skills = {
             normalize_skill(skill)
             for skill in opportunity["skills"].split(";")
             if skill.strip()
         }
 
+        role_skill_overlap = sorted(opportunity_skills & role_skills)
+        # Greenhouse departments use employer-specific labels (for example,
+        # "Security Analytics") rather than CareerLens's normalized roles.
+        # Use source labels or distinctive role skills as a transparent bridge.
+        if not _matches_career_family(
+            opportunity,
+            career_family,
+            career_families,
+            role_skill_overlap,
+        ):
+            continue
+
         matched_skills = sorted(
             opportunity_skills & missing_priorities.keys()
         )
 
-        if not matched_skills:
+        if not matched_skills and not include_related:
             continue
 
         priority_score = sum(
             PRIORITY_POINTS.get(missing_priorities[skill], 2)
             for skill in matched_skills
         )
+
+        if matched_skills:
+            reason = "Matches missing skills: " + ", ".join(matched_skills)
+        elif role_skill_overlap:
+            reason = (
+                f"Related to {career_family} through: "
+                + ", ".join(role_skill_overlap[:4])
+            )
+        else:
+            reason = f"Listed in the {career_family} career family."
 
         recommendations.append({
             "opportunity_id": opportunity["opportunity_id"].strip(),
@@ -245,6 +349,7 @@ def recommend_opportunities(
             "opportunity_type": opportunity["opportunity_type"].strip(),
             "url": opportunity["url"].strip(),
             "matched_skills": matched_skills,
+            "role_skills_matched": role_skill_overlap,
             "priority_score": priority_score,
             "location": opportunity["location"].strip(),
             "work_mode": opportunity["work_mode"].strip(),
@@ -254,13 +359,14 @@ def recommend_opportunities(
             "deadline": deadline_text,
             "source": opportunity["source"].strip(),
             "last_verified": opportunity["last_verified"].strip(),
-            "reason": "Matches missing skills: " + ", ".join(matched_skills),
+            "reason": reason,
         })
 
     recommendations.sort(
         key=lambda item: (
             -item["priority_score"],
             -len(item["matched_skills"]),
+            -len(item["role_skills_matched"]),
             item["title"].lower(),
         )
     )

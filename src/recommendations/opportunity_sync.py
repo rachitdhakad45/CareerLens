@@ -2,9 +2,12 @@
 """Fetch, normalize, and persist opportunities from configured sources."""
 
 from datetime import datetime, timezone
+from urllib.parse import urlparse
 
 from src.database.opportunity_store import (
+    close_missing_opportunities,
     finish_sync_run,
+    previous_sync_was_successful,
     start_sync_run,
     upsert_opportunity,
 )
@@ -43,6 +46,9 @@ def normalize_greenhouse_job(job: dict, source: dict) -> dict:
 
     title = title.strip()
     absolute_url = absolute_url.strip()
+    parsed_url = urlparse(absolute_url)
+    if parsed_url.scheme != "https" or not parsed_url.netloc:
+        raise ValueError("Greenhouse job URL must be an HTTPS URL.")
 
     location_data = job.get("location") or {}
     location = (
@@ -118,11 +124,14 @@ def sync_enabled_sources(
     errors = []
     total_fetched = 0
     total_saved = 0
+    total_rejected = 0
+    total_closed = 0
 
     for source in sources:
         source_id = source["source_id"]
         platform = source["platform"]
         run_id = None
+        previous_success_started_at = None
 
         try:
             if engine is not None:
@@ -130,6 +139,11 @@ def sync_enabled_sources(
                     engine,
                     source_id=source_id,
                     company=source["company"],
+                )
+                previous_success_started_at = previous_sync_was_successful(
+                    engine,
+                    source_id=source_id,
+                    before_run_id=run_id,
                 )
 
             connector = (
@@ -151,6 +165,7 @@ def sync_enabled_sources(
             total_fetched += len(jobs)
             saved_count = 0
             job_errors = []
+            seen_external_ids = set()
 
             for job in jobs:
                 try:
@@ -160,15 +175,40 @@ def sync_enabled_sources(
                         )
 
                     normalized = normalize_greenhouse_job(job, source)
+                    seen_external_ids.add(normalized["external_id"])
 
                     if engine is not None:
                         upsert_opportunity(engine, **normalized)
                         saved_count += 1
 
-                except ValueError as exc:
+                except Exception as exc:
                     job_errors.append(str(exc))
 
+            rejected_count = len(job_errors)
+            if not jobs:
+                job_errors.append(
+                    "Source returned an empty snapshot; existing listings "
+                    "were left unchanged."
+                )
+
+            closed_count = 0
+            if engine is not None and not job_errors:
+                try:
+                    closed_count = close_missing_opportunities(
+                        engine,
+                        source_id=source_id,
+                        seen_external_ids=seen_external_ids,
+                        stale_before=previous_success_started_at,
+                    )
+                except Exception as exc:
+                    job_errors.append(
+                        "Could not reconcile stale listings: "
+                        f"{type(exc).__name__}: {exc}"
+                    )
+
             total_saved += saved_count
+            total_rejected += rejected_count
+            total_closed += closed_count
 
             result = {
                 "source_id": source_id,
@@ -177,6 +217,8 @@ def sync_enabled_sources(
                 "fetched_at": datetime.now(timezone.utc).isoformat(),
                 "job_count": len(jobs),
                 "saved_count": saved_count,
+                "rejected_count": rejected_count,
+                "closed_count": closed_count,
                 "jobs": jobs,
                 "job_errors": job_errors,
             }
@@ -188,7 +230,7 @@ def sync_enabled_sources(
                     "company": source["company"],
                     "error": (
                         f"{len(job_errors)} job record(s) "
-                        "could not be processed."
+                        "or source-level issue(s) were reported."
                     ),
                     "details": job_errors,
                 })
@@ -206,7 +248,7 @@ def sync_enabled_sources(
                     status=status,
                     jobs_fetched=len(jobs),
                     jobs_saved=saved_count,
-                    jobs_rejected=len(job_errors),
+                    jobs_rejected=rejected_count,
                     error_message="; ".join(job_errors),
                 )
 
@@ -257,10 +299,10 @@ def sync_enabled_sources(
         if not result["job_errors"]
     }
 
-    # Keep source outcome categories mutually exclusive.
-    successful_source_ids -= partial_source_ids
-    failed_source_ids -= partial_source_ids
-    failed_source_ids -= successful_source_ids
+    # Failure to complete or record a run takes precedence over earlier
+    # per-job results; partial success takes precedence over clean success.
+    partial_source_ids -= failed_source_ids
+    successful_source_ids -= partial_source_ids | failed_source_ids
 
     return {
         "sources_configured": len(sources),
@@ -269,6 +311,8 @@ def sync_enabled_sources(
         "sources_failed": len(failed_source_ids),
         "jobs_fetched": total_fetched,
         "jobs_saved": total_saved,
+        "jobs_rejected": total_rejected,
+        "jobs_closed": total_closed,
         "results": results,
         "errors": errors,
     }

@@ -250,6 +250,166 @@ def test_source_failure_preserves_existing_database_records(tmp_path):
         engine.dispose()
 
 
+def test_complete_nonempty_snapshot_closes_missing_source_listings(tmp_path):
+    registry = create_registry(
+        tmp_path / "sources.csv",
+        [make_source("GH-001", "board-one")],
+    )
+    engine = create_database_engine(
+        f"sqlite:///{tmp_path / 'careerlens.db'}"
+    )
+    initialize_database(engine)
+    try:
+        from src.database.opportunity_store import upsert_opportunity
+
+        upsert_opportunity(
+            engine,
+            source_id="GH-001",
+            external_id="stale",
+            title="Old Job",
+            company="Company GH-001",
+            opportunity_type="job",
+            url="https://example.com/jobs/stale",
+        )
+        sync_enabled_sources(
+            registry,
+            fetcher=lambda board: [make_job(401, "Current Job")],
+            engine=engine,
+        )
+        report = sync_enabled_sources(
+            registry,
+            fetcher=lambda board: [make_job(401, "Current Job Updated")],
+            engine=engine,
+        )
+
+        with Session(engine) as session:
+            records = {
+                row.external_id: row.status
+                for row in session.scalars(select(Opportunity)).all()
+            }
+
+        assert records == {"401": "open", "stale": "closed"}
+        assert report["results"][0]["closed_count"] == 1
+    finally:
+        engine.dispose()
+
+
+def test_one_missing_snapshot_does_not_close_a_listing(tmp_path):
+    registry = create_registry(
+        tmp_path / "sources.csv",
+        [make_source("GH-001", "board-one")],
+    )
+    engine = create_database_engine(
+        f"sqlite:///{tmp_path / 'careerlens.db'}"
+    )
+    initialize_database(engine)
+    try:
+        sync_enabled_sources(
+            registry,
+            fetcher=lambda board: [
+                make_job(701, "Still Current"),
+                make_job(702, "May Be Stale"),
+            ],
+            engine=engine,
+        )
+        sync_enabled_sources(
+            registry,
+            fetcher=lambda board: [make_job(701, "Still Current")],
+            engine=engine,
+        )
+
+        with Session(engine) as session:
+            record = session.scalar(
+                select(Opportunity).where(Opportunity.external_id == "702")
+            )
+        assert record.status == "open"
+
+        sync_enabled_sources(
+            registry,
+            fetcher=lambda board: [make_job(701, "Still Current")],
+            engine=engine,
+        )
+
+        with Session(engine) as session:
+            record = session.scalar(
+                select(Opportunity).where(Opportunity.external_id == "702")
+            )
+        assert record.status == "closed"
+    finally:
+        engine.dispose()
+
+
+def test_empty_snapshot_preserves_existing_open_listings(tmp_path):
+    registry = create_registry(
+        tmp_path / "sources.csv",
+        [make_source("GH-001", "board-one")],
+    )
+    engine = create_database_engine(
+        f"sqlite:///{tmp_path / 'careerlens.db'}"
+    )
+    initialize_database(engine)
+    try:
+        sync_enabled_sources(
+            registry,
+            fetcher=lambda board: [make_job(501, "Keep This Job")],
+            engine=engine,
+        )
+        report = sync_enabled_sources(
+            registry, fetcher=lambda board: [], engine=engine
+        )
+
+        with Session(engine) as session:
+            record = session.scalar(select(Opportunity))
+            run = session.scalar(
+                select(SyncRun).order_by(SyncRun.id.desc())
+            )
+
+        assert record.status == "open"
+        assert report["sources_partially_succeeded"] == 1
+        assert report["results"][0]["closed_count"] == 0
+        assert run.status == "partially_succeeded"
+        assert "empty snapshot" in run.error_message
+    finally:
+        engine.dispose()
+
+
+def test_partial_snapshot_does_not_close_missing_listings(tmp_path):
+    registry = create_registry(
+        tmp_path / "sources.csv",
+        [make_source("GH-001", "board-one")],
+    )
+    engine = create_database_engine(
+        f"sqlite:///{tmp_path / 'careerlens.db'}"
+    )
+    initialize_database(engine)
+    try:
+        sync_enabled_sources(
+            registry,
+            fetcher=lambda board: [make_job(601, "Existing Job")],
+            engine=engine,
+        )
+        report = sync_enabled_sources(
+            registry,
+            fetcher=lambda board: [
+                make_job(602, "Valid Job"),
+                {"id": 603, "title": "Invalid Job"},
+            ],
+            engine=engine,
+        )
+
+        with Session(engine) as session:
+            records = {
+                row.external_id: row.status
+                for row in session.scalars(select(Opportunity)).all()
+            }
+
+        assert records == {"601": "open", "602": "open"}
+        assert report["results"][0]["closed_count"] == 0
+        assert report["sources_partially_succeeded"] == 1
+    finally:
+        engine.dispose()
+
+
 def test_invalid_job_is_not_saved(tmp_path):
     registry = create_registry(
         tmp_path / "sources.csv",
@@ -471,3 +631,20 @@ def test_normalizer_does_not_invent_unknown_job_metadata():
     assert normalized["compensation"] == ""
     assert normalized["deadline"] == ""
     assert normalized["location"] == "New York"
+
+
+def test_normalizer_rejects_non_https_application_urls():
+    source = {
+        "source_id": "GH-TEST",
+        "company": "Example Company",
+    }
+    job = {
+        "id": 999,
+        "title": "Unsafe URL Listing",
+        "absolute_url": "javascript:alert(1)",
+    }
+
+    import pytest
+
+    with pytest.raises(ValueError, match="HTTPS"):
+        normalize_greenhouse_job(job, source)

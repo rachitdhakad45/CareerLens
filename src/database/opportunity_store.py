@@ -3,7 +3,7 @@
 
 from datetime import datetime, timezone
 
-from sqlalchemy import create_engine, select
+from sqlalchemy import create_engine, select, update
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session
 
@@ -122,6 +122,63 @@ def list_open_opportunities(engine: Engine) -> list[Opportunity]:
         for record in records:
             session.expunge(record)
         return list(records)
+
+
+def close_missing_opportunities(
+    engine: Engine,
+    *,
+    source_id: str,
+    seen_external_ids: set[str],
+    stale_before: datetime | None,
+) -> int:
+    """Close previously open source listings absent from a complete snapshot.
+
+    Callers must only use this after a successful, fully processed fetch and
+    an immediately preceding successful run. Empty snapshots are rejected;
+    the timestamp also requires each closing candidate to have been absent
+    from both complete snapshots.
+    """
+    if not isinstance(source_id, str) or not source_id.strip():
+        raise ValueError("source_id must be a non-empty string.")
+    if not isinstance(seen_external_ids, set) or not seen_external_ids:
+        raise ValueError("A non-empty set of seen listing IDs is required.")
+    if stale_before is None:
+        return 0
+    if stale_before.tzinfo is None:
+        raise ValueError("stale_before must be timezone-aware.")
+
+    with Session(engine) as session:
+        query = update(Opportunity).where(
+            Opportunity.source_id == source_id.strip(),
+            Opportunity.status == "open",
+            Opportunity.external_id.not_in(seen_external_ids),
+            Opportunity.last_seen_at < stale_before,
+        ).values(status="closed")
+        result = session.execute(query)
+        session.commit()
+        return result.rowcount or 0
+
+
+def previous_sync_was_successful(
+    engine: Engine,
+    *,
+    source_id: str,
+    before_run_id: int,
+) -> datetime | None:
+    """Return the immediately previous run start only if it succeeded."""
+    with Session(engine) as session:
+        previous = session.scalar(
+            select(SyncRun)
+            .where(
+                SyncRun.source_id == source_id,
+                SyncRun.id < before_run_id,
+            )
+            .order_by(SyncRun.id.desc())
+            .limit(1)
+        )
+        if previous is None or previous.status != "succeeded":
+            return None
+        return previous.started_at
 
 
 def start_sync_run(

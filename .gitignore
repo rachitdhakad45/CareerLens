@@ -9,6 +9,8 @@ __pycache__/
 .pytest_cache/
 .coverage
 htmlcov/
+.codex-pytest-tmp/
+_codex_test_temp_*/
 
 # Environment variables / secrets
 .env

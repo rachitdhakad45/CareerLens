@@ -71,6 +71,68 @@ def test_network_error_is_reported():
             fetch_greenhouse_jobs("example-board")
 
 
+def test_temporary_server_error_is_retried(monkeypatch):
+    error = HTTPError(
+        url="https://example.com",
+        code=503,
+        msg="Service Unavailable",
+        hdrs=None,
+        fp=None,
+    )
+    response = mock_response({"jobs": [{"id": 789}]})
+    calls = []
+
+    def request(*args, **kwargs):
+        calls.append(1)
+        if len(calls) == 1:
+            raise error
+        return response
+
+    monkeypatch.setattr(
+        "src.recommendations.source_connectors.greenhouse.urlopen", request
+    )
+    monkeypatch.setattr(
+        "src.recommendations.source_connectors.greenhouse.time.sleep",
+        lambda delay: None,
+    )
+
+    assert fetch_greenhouse_jobs("example-board") == [{"id": 789}]
+    assert len(calls) == 2
+
+
+def test_not_found_error_is_not_retried(monkeypatch):
+    error = HTTPError(
+        url="https://example.com",
+        code=404,
+        msg="Not Found",
+        hdrs=None,
+        fp=None,
+    )
+    calls = []
+
+    def request(*args, **kwargs):
+        calls.append(1)
+        raise error
+
+    monkeypatch.setattr(
+        "src.recommendations.source_connectors.greenhouse.urlopen", request
+    )
+    monkeypatch.setattr(
+        "src.recommendations.source_connectors.greenhouse.time.sleep",
+        lambda delay: None,
+    )
+
+    with pytest.raises(GreenhouseAPIError, match="HTTP 404"):
+        fetch_greenhouse_jobs("example-board")
+
+    assert len(calls) == 1
+
+
+def test_invalid_retry_configuration_is_rejected():
+    with pytest.raises(ValueError, match="max_attempts"):
+        fetch_greenhouse_jobs("example-board", max_attempts=0)
+
+
 def test_invalid_response_is_rejected():
     with patch(
         "src.recommendations.source_connectors.greenhouse.urlopen",
