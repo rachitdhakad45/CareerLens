@@ -152,7 +152,7 @@ def ask_career_assistant(
             message = (
                 f"the assistant service rejected the request "
                 f"(HTTP {response.status_code}{detail}); check the "
-                "configured key, model, or request"
+                "configured API key, model, or request"
             )
         raise CareerAssistantError(
             message
