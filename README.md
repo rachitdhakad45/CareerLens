@@ -1,3 +1,10 @@
+
+# CareerLens – AI-Powered Career Intelligence Platform
+
+🚀 **[Try CareerLens Live](https://careerlens-assistant.streamlit.app/)**
+
+An AI-powered career intelligence platform that helps students analyze their resumes, discover suitable career paths, identify skill gaps, and explore relevant courses and job opportunities.
+
 # CareerLens
 
 CareerLens turns a text-based resume PDF into an explainable career plan. It extracts resume details and skills, suggests career families, provides ATS-oriented feedback, compares evidence with role requirements, recommends learning resources, and surfaces recently verified job listings.
